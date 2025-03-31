@@ -278,8 +278,8 @@ class Component(ComponentBase):
             return False, "The RSA key does not contain any newline characters."
         return True, ""
 
-    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host
-                           , ssh_tunnel_port, db_hostname, db_port) -> None:
+    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host,
+                           ssh_tunnel_port, db_hostname, db_port) -> None:
 
         is_valid, error_message = self.is_valid_rsa(private_key)
         if is_valid:
@@ -305,6 +305,7 @@ class Component(ComponentBase):
                                              local_bind_address=(LOCAL_BIND_ADDRESS, db_port),
                                              ssh_config_file=None,
                                              allow_agent=False)
+
 
 if __name__ == "__main__":
     try:

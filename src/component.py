@@ -136,7 +136,6 @@ class Component(ComponentBase):
 
         return client
 
-
     def run(self):
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
@@ -254,6 +253,7 @@ class Component(ComponentBase):
     @staticmethod
     def cleanup(temp_folder):
         shutil.rmtree(temp_folder)
+
 
 if __name__ == "__main__":
     try:

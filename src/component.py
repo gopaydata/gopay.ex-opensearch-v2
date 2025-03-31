@@ -19,7 +19,7 @@ from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 KEY_GROUP_DB = 'db'
 KEY_DB_HOSTNAME = 'hostname'
 KEY_DB_PORT = 'port'
-KEY_QUERY = 'request_body'  # this is named like this for backwards compatibility
+KEY_QUERY = 'request_body'
 KEY_INDEX_NAME = 'index_name'
 KEY_STORAGE_TABLE = 'storage_table'
 KEY_PRIMARY_KEYS = 'primary_keys'
@@ -39,7 +39,7 @@ KEY_DATE_FORMAT = 'format'
 KEY_DATE_SHIFT = 'shift'
 KEY_DATE_TZ = 'time_zone'
 DATE_PLACEHOLDER = '{{date}}'
-DEFAULT_DATE = 'yesterday'
+DEFAULT_DATE = '5 minutes'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d'
 DEFAULT_TZ = 'UTC'
 
@@ -72,22 +72,29 @@ class Component(ComponentBase):
         if params.get(KEY_LEGACY_SSH):
             self.run_legacy_client()
         else:
-            out_table_name = params.get(KEY_STORAGE_TABLE, False)
-            if not out_table_name:
-                out_table_name = "ex-elasticsearch-result"
-                logging.info(f"Using default output table name: {out_table_name}")
+            out_table_name = params.get(KEY_STORAGE_TABLE, "ex-elasticsearch-result")
+            logging.info(f"Using output table name: {out_table_name}")
 
             user_defined_pk = params.get(KEY_PRIMARY_KEYS, [])
             incremental = params.get(KEY_INCREMENTAL, False)
 
             index_name, query = self.parse_index_parameters(params)
+            logging.info(f"Extracting data from index: {index_name}")
+
+            range_query = query.get('query', {}).get('range', {})
+            if range_query:
+                for field, condition in range_query.items():
+                    gte = condition.get('gte', 'not specified')
+                    lte = condition.get('lte', 'not specified')
+                    logging.info(f"Time range on field '{field}': from {gte} to {lte}")
+
+            logging.info(f"Full query: {json.dumps(query)}")
+
             statefile = self.get_state_file()
 
             ssh_options = params.get(KEY_SSH)
-            # fix eternal KBC issue
-            if not isinstance(ssh_options, list):
-                if ssh_options.get(KEY_USE_SSH, False):
-                    self._create_and_start_ssh_tunnel(params)
+            if not isinstance(ssh_options, list) and ssh_options.get(KEY_USE_SSH, False):
+                self._create_and_start_ssh_tunnel(params)
 
             client = self.get_client(params)
 
@@ -95,19 +102,24 @@ class Component(ComponentBase):
             os.makedirs(temp_folder, exist_ok=True)
 
             columns = statefile.get(out_table_name, [])
-            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
-                                                         incremental=incremental)
+            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
 
+            doc_count = 0
             try:
                 with ElasticDictWriter(out_table.full_path, columns) as wr:
                     for result in client.extract_data(index_name, query):
                         wr.writerow(result)
+                        doc_count += 1
+                        if doc_count % 10000 == 0:
+                            logging.info(f"Downloaded {doc_count} documents so far...")
                     wr.writeheader()
             except Exception as e:
-                raise UserException(f"Error occured while extracting data from Elasticsearch: {e}")
+                raise UserException(f"Error occured while extracting data from OpenSearch: {e}")
             finally:
                 if hasattr(self, 'ssh_tunnel') and self.ssh_tunnel.is_active:
                     self.ssh_tunnel.stop()
+
+            logging.info(f"Total downloaded documents: {doc_count}")
 
             self.write_manifest(out_table)
             statefile[out_table_name] = wr.fieldnames
@@ -132,6 +144,13 @@ class Component(ComponentBase):
         db_hostname = db_params.get(KEY_DB_HOSTNAME)
         db_port = db_params.get(KEY_DB_PORT)
         scheme = params.get(KEY_SCHEME, "http")
+
+        # Pokud je aktivní SSH tunnel, přepíšeme hostname a port
+        if hasattr(self, "ssh_tunnel") and self.ssh_tunnel.is_active:
+            logging.info("OK - Tunnel is active.")
+            db_hostname, db_port = self.ssh_tunnel.local_bind_address
+        else:
+            logging.info("SSH tunnel is not active or not configured.")
 
         auth_type = auth_params.get(KEY_AUTH_TYPE, False)
         if auth_type not in ["basic", "api_key", "bearer", "no_auth"]:
@@ -166,9 +185,9 @@ class Component(ComponentBase):
         try:
             p = client.ping(error_trace=True)
             if not p:
-                raise UserException(f"Connection to Elasticsearch instance {db_hostname}:{db_port} failed.")
+                raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed.")
         except Exception as e:
-            raise UserException(f"Connection to Elasticsearch instance {db_hostname}:{db_port} failed. {str(e)}")
+            raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed. {str(e)}")
 
         return client
 
@@ -214,15 +233,13 @@ class Component(ComponentBase):
         _date_tz = pytz.timezone(_tz).normalize(_date)
         _date_formatted = _date_tz.strftime(date_config.get(KEY_DATE_FORMAT, DEFAULT_DATE_FORMAT))
 
-        logging.info(f"Replaced date placeholder with value {_date_formatted}. "
-                     f"Downloading data from index {index.replace(DATE_PLACEHOLDER, _date_formatted)}.")
+        logging.info(f"Replaced date placeholder with value {_date_formatted}. Downloading data from index {index.replace(DATE_PLACEHOLDER, _date_formatted)}.")
         return index.replace(DATE_PLACEHOLDER, _date_formatted)
 
     @staticmethod
     def _validate_timezone(tz):
         if tz not in pytz.all_timezones:
-            raise UserException(f"Incorrect timezone {tz} provided. Timezone must be a valid DB timezone name. "
-                                "See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List.")
+            raise UserException(f"Incorrect timezone {tz} provided. Timezone must be a valid DB timezone name. See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List.")
         return tz
 
     @staticmethod
@@ -241,14 +258,12 @@ class Component(ComponentBase):
         db_params = params.get(KEY_GROUP_DB)
         db_hostname = db_params.get(KEY_DB_HOSTNAME)
         db_port = db_params.get(KEY_DB_PORT)
-        self._create_ssh_tunnel(ssh_username, private_key, ssh_tunnel_host, ssh_tunnel_port,
-                                db_hostname, db_port)
+        self._create_ssh_tunnel(ssh_username, private_key, ssh_tunnel_host, ssh_tunnel_port, db_hostname, db_port)
 
         try:
             self.ssh_server.start()
         except BaseSSHTunnelForwarderError as e:
-            raise UserException(
-                "Failed to establish SSH connection. Recheck all SSH configuration parameters") from e
+            raise UserException("Failed to establish SSH connection. Recheck all SSH configuration parameters") from e
 
         logging.info("SSH tunnel is enabled.")
 
@@ -260,8 +275,7 @@ class Component(ComponentBase):
             return False, "The RSA key does not contain any newline characters."
         return True, ""
 
-    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host, ssh_tunnel_port,
-                           db_hostname, db_port) -> None:
+    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host, ssh_tunnel_port, db_hostname, db_port) -> None:
 
         is_valid, error_message = self.is_valid_rsa(private_key)
         if is_valid:
@@ -288,14 +302,9 @@ class Component(ComponentBase):
                                              ssh_config_file=None,
                                              allow_agent=False)
 
-
-"""
-        Main entrypoint
-"""
 if __name__ == "__main__":
     try:
         comp = Component()
-        # this triggers the run method by default and is controlled by the configuration.action parameter
         comp.execute_action()
     except UserException as exc:
         logging.exception(exc)

@@ -102,7 +102,8 @@ class Component(ComponentBase):
             os.makedirs(temp_folder, exist_ok=True)
 
             columns = statefile.get(out_table_name, [])
-            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
+            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
+                                                         incremental=incremental)
 
             doc_count = 0
             try:
@@ -233,13 +234,15 @@ class Component(ComponentBase):
         _date_tz = pytz.timezone(_tz).normalize(_date)
         _date_formatted = _date_tz.strftime(date_config.get(KEY_DATE_FORMAT, DEFAULT_DATE_FORMAT))
 
-        logging.info(f"Replaced date placeholder with value {_date_formatted}. Downloading data from index {index.replace(DATE_PLACEHOLDER, _date_formatted)}.")
+        logging.info(f"Replaced date placeholder with value {_date_formatted}. Downloading data from index "
+                     f"{index.replace(DATE_PLACEHOLDER, _date_formatted)}.")
         return index.replace(DATE_PLACEHOLDER, _date_formatted)
 
     @staticmethod
     def _validate_timezone(tz):
         if tz not in pytz.all_timezones:
-            raise UserException(f"Incorrect timezone {tz} provided. Timezone must be a valid DB timezone name. See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List.")
+            raise UserException(f"Incorrect timezone {tz} provided. Timezone must be a valid DB timezone name. "
+                                f"See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List.")
         return tz
 
     @staticmethod
@@ -275,7 +278,8 @@ class Component(ComponentBase):
             return False, "The RSA key does not contain any newline characters."
         return True, ""
 
-    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host, ssh_tunnel_port, db_hostname, db_port) -> None:
+    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host
+                           , ssh_tunnel_port, db_hostname, db_port) -> None:
 
         is_valid, error_message = self.is_valid_rsa(private_key)
         if is_valid:

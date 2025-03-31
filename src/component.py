@@ -6,6 +6,8 @@ import shutil
 # import dateparser
 # import pytz
 import gc
+import sys
+import csv
 
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
@@ -145,6 +147,7 @@ class Component(ComponentBase):
         return client
 
     def run(self):
+        csv.field_size_limit(sys.maxsize)
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
 
@@ -185,7 +188,8 @@ class Component(ComponentBase):
         os.makedirs(temp_folder, exist_ok=True)
 
         columns = statefile.get(out_table_name, [])
-        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
+        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
+                                                     incremental=incremental)
 
         doc_count = 0
         try:

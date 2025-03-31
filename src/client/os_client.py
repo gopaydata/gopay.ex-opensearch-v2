@@ -1,5 +1,5 @@
 import json
-import typing as t
+# import typing as t
 from typing import Iterable
 
 from opensearchpy import OpenSearch

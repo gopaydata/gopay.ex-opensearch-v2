@@ -15,8 +15,6 @@ from legacy_client.legacy_es_client import LegacyClient
 from client.ssh_utils import SomeSSHException, get_private_key
 from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 
-from dateutil.relativedelta import relativedelta
-
 # configuration variables
 KEY_GROUP_DB = 'db'
 KEY_DB_HOSTNAME = 'hostname'

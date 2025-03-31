@@ -60,19 +60,16 @@ REQUIRED_PARAMETERS = [KEY_GROUP_DB]
 
 RSA_HEADER = "-----BEGIN RSA PRIVATE KEY-----"
 
-
 class Component(ComponentBase):
 
     def __init__(self):
         super().__init__()
 
     def build_query(self, params):
-        # Pokud je query přímo v configu, použij ho
         if "query" in params:
             logging.info("Custom query provided in config, using it directly.")
             return params["query"]
 
-        # Pokud není, vygeneruj z time_window_minutes
         minutes = params.get(KEY_TIME_WINDOW, 5)
         logging.info(f"Generating query for the last {minutes} minutes (now-{minutes}m to now)")
         return {
@@ -86,6 +83,58 @@ class Component(ComponentBase):
             }
         }
 
+    def get_client(self, params: dict) -> OpenSearchClient:
+        auth_params = params.get(KEY_GROUP_AUTH)
+        if not auth_params:
+            return self.get_client_legacy(params)
+
+        db_params = params.get(KEY_GROUP_DB)
+        db_hostname = db_params.get(KEY_DB_HOSTNAME)
+        db_port = db_params.get(KEY_DB_PORT)
+        scheme = params.get(KEY_SCHEME, "http")
+
+        if hasattr(self, "ssh_tunnel") and self.ssh_tunnel.is_active:
+            local_host, local_port = self.ssh_tunnel.local_bind_address
+            logging.info(f"SSH Tunnel is active. Using local_bind_address: {local_host}:{local_port}")
+            db_hostname, db_port = local_host, local_port
+
+        auth_type = auth_params.get(KEY_AUTH_TYPE, False)
+        if auth_type not in ["basic", "api_key", "bearer", "no_auth"]:
+            raise UserException(f"Invalid auth_type: {auth_type}")
+
+        setup = {"host": db_hostname, "port": db_port, "scheme": scheme}
+
+        logging.info(f"The component will use {auth_type} type authorization.")
+
+        if auth_type == "basic":
+            username = auth_params.get(KEY_USERNAME)
+            password = auth_params.get(KEY_PASSWORD)
+            if not (username and password):
+                raise UserException("You must specify both username and password for basic type authorization")
+            auth = (username, password)
+            client = OpenSearchClient([setup], scheme, http_auth=auth)
+
+        elif auth_type == "api_key":
+            api_key_id = auth_params.get(KEY_API_KEY_ID)
+            api_key = auth_params.get(KEY_API_KEY)
+            api_key = (api_key_id, api_key)
+            client = OpenSearchClient([setup], scheme, api_key=api_key)
+
+        elif auth_type == "no_auth":
+            client = OpenSearchClient([setup], scheme)
+
+        else:
+            raise UserException(f"Unsupported auth_type: {auth_type}")
+
+        try:
+            p = client.ping(error_trace=True)
+            if not p:
+                raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed.")
+        except Exception as e:
+            raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed. {str(e)}")
+
+        return client
+    
     def run(self):
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
@@ -129,8 +178,7 @@ class Component(ComponentBase):
             os.makedirs(temp_folder, exist_ok=True)
 
             columns = statefile.get(out_table_name, [])
-            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
-                                                         incremental=incremental)
+            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
 
             doc_count = 0
             try:
@@ -144,12 +192,9 @@ class Component(ComponentBase):
             except Exception as e:
                 raise UserException(f"Error occured while extracting data from OpenSearch: {e}")
             finally:
-                if hasattr(self, 'ssh_tunnel'):
-                    if self.ssh_tunnel.is_active:
-                        logging.info("Stopping SSH Tunnel.")
-                        self.ssh_tunnel.stop()
-                    else:
-                        logging.warning("SSH Tunnel was expected but is not active anymore.")
+                if hasattr(self, 'ssh_tunnel') and self.ssh_tunnel.is_active:
+                    logging.info("Stopping SSH Tunnel.")
+                    self.ssh_tunnel.stop()
 
             logging.info(f"Total downloaded documents: {doc_count}")
 
@@ -158,186 +203,42 @@ class Component(ComponentBase):
             self.write_state_file(statefile)
             self.cleanup(temp_folder)
 
-    @staticmethod
-    def run_legacy_client() -> None:
-        client = LegacyClient()
-        client.run()
-
-    @staticmethod
-    def cleanup(temp_folder: str):
-        shutil.rmtree(temp_folder)
-
-    def get_client(self, params: dict) -> OpenSearchClient:
-        auth_params = params.get(KEY_GROUP_AUTH)
-        if not auth_params:
-            return self.get_client_legacy(params)
-
-        db_params = params.get(KEY_GROUP_DB)
-        db_hostname = db_params.get(KEY_DB_HOSTNAME)
-        db_port = db_params.get(KEY_DB_PORT)
-        scheme = params.get(KEY_SCHEME, "http")
-
-        # Pokud je aktivní SSH tunnel, přepíšeme hostname a port
-        if hasattr(self, "ssh_tunnel") and self.ssh_tunnel.is_active:
-            local_host, local_port = self.ssh_tunnel.local_bind_address
-            logging.info(f"SSH Tunnel is active. Using local_bind_address: {local_host}:{local_port}")
-            db_hostname, db_port = local_host, local_port
-        else:
-            logging.info("SSH Tunnel is not active or not configured.")
-
-        auth_type = auth_params.get(KEY_AUTH_TYPE, False)
-        if auth_type not in ["basic", "api_key", "bearer", "no_auth"]:
-            raise UserException(f"Invalid auth_type: {auth_type}")
-
-        setup = {"host": db_hostname, "port": db_port, "scheme": scheme}
-
-        logging.info(f"The component will use {auth_type} type authorization.")
-
-        if auth_type == "basic":
-            username = auth_params.get(KEY_USERNAME)
-            password = auth_params.get(KEY_PASSWORD)
-
-            if not (username and password):
-                raise UserException("You must specify both username and password for basic type authorization")
-
-            auth = (username, password)
-            client = OpenSearchClient([setup], scheme, http_auth=auth)
-
-        elif auth_type == "api_key":
-            api_key_id = auth_params.get(KEY_API_KEY_ID)
-            api_key = auth_params.get(KEY_API_KEY)
-            api_key = (api_key_id, api_key)
-            client = OpenSearchClient([setup], scheme, api_key=api_key)
-
-        elif auth_type == "no_auth":
-            client = OpenSearchClient([setup], scheme)
-
-        else:
-            raise UserException(f"Unsupported auth_type: {auth_type}")
-
-        try:
-            p = client.ping(error_trace=True)
-            if not p:
-                raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed.")
-        except Exception as e:
-            raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed. {str(e)}")
-
-        return client
-
-    @staticmethod
-    def get_client_legacy(params) -> OpenSearchClient:
-        db_params = params.get(KEY_GROUP_DB)
-        db_hostname = db_params.get(KEY_DB_HOSTNAME)
-        db_port = db_params.get(KEY_DB_PORT)
-
-        setup = {"host": db_hostname, "port": db_port, "scheme": "http"}
-        client = OpenSearchClient([setup])
-
-        return client
-
-    def parse_index_parameters(self, params):
-        index = params.get(KEY_INDEX_NAME, "")
-        date_config = params.get(KEY_GROUP_DATE, {})
-        query = self._parse_query(params)
-
-        if DATE_PLACEHOLDER in index:
-            index = self._replace_date_placeholder(index, date_config)
-
-        return index, query
-
-    @staticmethod
-    def _parse_query(params):
-        _query = params.get(KEY_QUERY, '{}').strip()
-        query_string = _query if _query != '' else '{}'
-
-        try:
-            logging.info(f"Using query: {query_string}")
-            return json.loads(query_string)
-        except ValueError:
-            raise UserException("Could not parse request body string to JSON.")
-
-    def _replace_date_placeholder(self, index, date_config):
-        _date = dateparser.parse(date_config.get(KEY_DATE_SHIFT, DEFAULT_DATE))
-        if _date is None:
-            raise UserException(f"Could not parse value {date_config[KEY_DATE_SHIFT]} to date.")
-
-        _date = _date.replace(tzinfo=pytz.UTC)
-        _tz = self._validate_timezone(date_config.get(KEY_DATE_TZ, DEFAULT_TZ))
-        _date_tz = pytz.timezone(_tz).normalize(_date)
-        _date_formatted = _date_tz.strftime(date_config.get(KEY_DATE_FORMAT, DEFAULT_DATE_FORMAT))
-
-        logging.info(f"Replaced date placeholder with value {_date_formatted}. Downloading data from index "
-                     f"{index.replace(DATE_PLACEHOLDER, _date_formatted)}.")
-        return index.replace(DATE_PLACEHOLDER, _date_formatted)
-
-    @staticmethod
-    def _validate_timezone(tz):
-        if tz not in pytz.all_timezones:
-            raise UserException(f"Incorrect timezone {tz} provided. Timezone must be a valid DB timezone name. "
-                                f"See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List.")
-        return tz
-
-    @staticmethod
-    def _save_results(results: list, destination: str) -> None:
-        full_path = os.path.join(destination, f"{uuid.uuid4()}.json")
-        with open(full_path, "w") as json_file:
-            json.dump(results, json_file, indent=4)
-
-    def _create_and_start_ssh_tunnel(self, params) -> None:
+    def _create_and_start_ssh_tunnel(self, params):
         ssh_params = params.get(KEY_SSH)
         ssh_username = ssh_params.get(KEY_SSH_USERNAME)
-        keys = ssh_params.get(KEY_SSH_KEYS)
-        private_key = keys.get(KEY_SSH_PRIVATE_KEY)
+        private_key = ssh_params.get(KEY_SSH_KEYS, {}).get(KEY_SSH_PRIVATE_KEY)
         ssh_tunnel_host = ssh_params.get(KEY_SSH_TUNNEL_HOST)
         ssh_tunnel_port = ssh_params.get(KEY_SSH_TUNNEL_PORT, 22)
         db_params = params.get(KEY_GROUP_DB)
         db_hostname = db_params.get(KEY_DB_HOSTNAME)
-        db_port = db_params.get(KEY_DB_PORT)
-        self._create_ssh_tunnel(ssh_username, private_key, ssh_tunnel_host, ssh_tunnel_port, db_hostname, db_port)
+        db_port = int(db_params.get(KEY_DB_PORT))
+
+        if not private_key or not private_key.startswith(RSA_HEADER):
+            raise UserException("Invalid or missing RSA private key.")
+
+        logging.info(f"Setting up SSH tunnel to {ssh_tunnel_host}:{ssh_tunnel_port}...")
+        self.ssh_tunnel = SSHTunnelForwarder(
+            ssh_address_or_host=(ssh_tunnel_host, ssh_tunnel_port),
+            ssh_username=ssh_username,
+            ssh_pkey=get_private_key(private_key, None),
+            remote_bind_address=(db_hostname, db_port),
+            local_bind_address=(LOCAL_BIND_ADDRESS, 0)
+        )
 
         try:
-            self.ssh_server.start()
+            self.ssh_tunnel.start()
+            logging.info(f"SSH tunnel established: {self.ssh_tunnel.local_bind_address} -> {db_hostname}:{db_port}")
         except BaseSSHTunnelForwarderError as e:
-            raise UserException("Failed to establish SSH connection. Recheck all SSH configuration parameters") from e
-
-        logging.info("SSH tunnel is enabled.")
+            raise UserException("Failed to establish SSH tunnel") from e
 
     @staticmethod
-    def is_valid_rsa(rsa_key) -> (bool, str):
-        if not rsa_key.startswith(RSA_HEADER):
-            return False, f"The RSA key does not start with the correct header: {RSA_HEADER}"
-        if "\n" not in rsa_key:
-            return False, "The RSA key does not contain any newline characters."
-        return True, ""
+    def run_legacy_client():
+        client = LegacyClient()
+        client.run()
 
-    def _create_ssh_tunnel(self, ssh_username, private_key, ssh_tunnel_host,
-                           ssh_tunnel_port, db_hostname, db_port) -> None:
-
-        is_valid, error_message = self.is_valid_rsa(private_key)
-        if is_valid:
-            logging.info("SSH tunnel is enabled.")
-        else:
-            raise UserException(f"Invalid RSA key provided: {error_message}")
-
-        try:
-            private_key = get_private_key(private_key, None)
-        except SomeSSHException as e:
-            raise UserException(e) from e
-
-        try:
-            db_port = int(db_port)
-        except ValueError as e:
-            raise UserException("Remote port must be a valid integer") from e
-
-        self.ssh_server = SSHTunnelForwarder(ssh_address_or_host=ssh_tunnel_host,
-                                             ssh_port=ssh_tunnel_port,
-                                             ssh_pkey=private_key,
-                                             ssh_username=ssh_username,
-                                             remote_bind_address=(db_hostname, db_port),
-                                             local_bind_address=(LOCAL_BIND_ADDRESS, db_port),
-                                             ssh_config_file=None,
-                                             allow_agent=False)
-
+    @staticmethod
+    def cleanup(temp_folder):
+        shutil.rmtree(temp_folder)
 
 if __name__ == "__main__":
     try:

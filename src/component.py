@@ -177,7 +177,8 @@ class Component(ComponentBase):
         os.makedirs(temp_folder, exist_ok=True)
 
         columns = statefile.get(out_table_name, [])
-        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
+        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
+                                                     incremental=incremental)
 
         doc_count = 0
         try:

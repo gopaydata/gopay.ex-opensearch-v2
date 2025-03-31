@@ -30,7 +30,6 @@
             "type": "integer",
             "default": 5,
             "propertyOrder": 250
-        }
         },
         "storage_table": {
             "title": "Output Table Name",

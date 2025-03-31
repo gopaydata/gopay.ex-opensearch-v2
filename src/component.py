@@ -6,8 +6,6 @@ import shutil
 # import dateparser
 # import pytz
 import gc
-import sys
-import csv
 
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
@@ -37,7 +35,6 @@ KEY_BEARER = '#bearer'
 KEY_SCHEME = 'scheme'
 KEY_TIME_WINDOW = 'time_window_minutes'
 KEY_SIZE = 'size'
-KEY_SCROLL_SIZE = 'scroll_size'
 
 KEY_GROUP_DATE = 'date'
 KEY_DATE_APPEND = 'append_date'
@@ -147,7 +144,6 @@ class Component(ComponentBase):
         return client
 
     def run(self):
-        csv.field_size_limit(sys.maxsize)
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
 
@@ -156,7 +152,6 @@ class Component(ComponentBase):
 
         user_defined_pk = params.get(KEY_PRIMARY_KEYS, [])
         incremental = params.get(KEY_INCREMENTAL, False)
-        scroll_size = params.get(KEY_SCROLL_SIZE, 1000)
 
         index_name = params.get(KEY_INDEX_NAME)
         query = self.build_query(params)
@@ -188,13 +183,12 @@ class Component(ComponentBase):
         os.makedirs(temp_folder, exist_ok=True)
 
         columns = statefile.get(out_table_name, [])
-        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
-                                                     incremental=incremental)
+        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
 
         doc_count = 0
         try:
             with ElasticDictWriter(out_table.full_path, columns) as wr:
-                for result in client.extract_data(index_name, query, scroll_size=scroll_size):
+                for result in client.extract_data(index_name, query):
                     wr.writerow(result)
                     doc_count += 1
                     if doc_count % 500 == 0:

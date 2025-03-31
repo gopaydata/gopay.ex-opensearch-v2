@@ -5,6 +5,7 @@ import os
 import shutil
 # import dateparser
 # import pytz
+import gc
 
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
@@ -33,6 +34,8 @@ KEY_API_KEY = '#api_key'
 KEY_BEARER = '#bearer'
 KEY_SCHEME = 'scheme'
 KEY_TIME_WINDOW = 'time_window_minutes'
+KEY_SIZE = 'size'
+KEY_SCROLL_SIZE = 'scroll_size'
 
 KEY_GROUP_DATE = 'date'
 KEY_DATE_APPEND = 'append_date'
@@ -68,19 +71,17 @@ class Component(ComponentBase):
         self.ssh_tunnel = None
 
     def build_query(self, params):
-        if KEY_QUERY in params:
+        if KEY_QUERY in params and params[KEY_QUERY]:
             logging.info("Custom query provided in config, using it directly.")
             query = json.loads(params[KEY_QUERY])
-
-            # Přidej default size = 1000, pokud tam není
-            if "size" not in query:
-                query["size"] = params.get("batch_size", 1000)
+            query.setdefault("size", params.get(KEY_SIZE, 1000))
             return query
 
-        # Pokud není custom query
         minutes = params.get(KEY_TIME_WINDOW, 5)
-        logging.info(f"Generating query for the last {minutes} minutes (now-{minutes}m to now)")
+        size = params.get(KEY_SIZE, 1000)
+        logging.info(f"Generating query for the last {minutes} minutes (now-{minutes}m to now) with size={size}")
         return {
+            "size": size,
             "query": {
                 "range": {
                     "@timestamp": {
@@ -88,8 +89,7 @@ class Component(ComponentBase):
                         "lte": "now"
                     }
                 }
-            },
-            "size": params.get("batch_size", 1000)
+            }
         }
 
     def get_client(self, params: dict) -> OpenSearchClient:
@@ -148,11 +148,12 @@ class Component(ComponentBase):
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
 
-        out_table_name = params.get(KEY_STORAGE_TABLE, "ex-elasticsearch-result")
+        out_table_name = params.get(KEY_STORAGE_TABLE, "").strip() or "ex-opensearch-result"
         logging.info(f"Using output table name: {out_table_name}")
 
         user_defined_pk = params.get(KEY_PRIMARY_KEYS, [])
         incremental = params.get(KEY_INCREMENTAL, False)
+        scroll_size = params.get(KEY_SCROLL_SIZE, 1000)
 
         index_name = params.get(KEY_INDEX_NAME)
         query = self.build_query(params)
@@ -184,17 +185,17 @@ class Component(ComponentBase):
         os.makedirs(temp_folder, exist_ok=True)
 
         columns = statefile.get(out_table_name, [])
-        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
-                                                     incremental=incremental)
+        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
 
         doc_count = 0
         try:
             with ElasticDictWriter(out_table.full_path, columns) as wr:
-                for result in client.extract_data(index_name, query):
+                for result in client.extract_data(index_name, query, scroll_size=scroll_size):
                     wr.writerow(result)
                     doc_count += 1
-                    if doc_count % 10000 == 0:
+                    if doc_count % 500 == 0:
                         logging.info(f"Downloaded {doc_count} documents so far...")
+                        gc.collect()
                 wr.writeheader()
         except Exception as e:
             raise UserException(f"Error occured while extracting data from OpenSearch: {e}")

@@ -15,6 +15,8 @@ from legacy_client.legacy_es_client import LegacyClient
 from client.ssh_utils import SomeSSHException, get_private_key
 from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 
+from dateutil.relativedelta import relativedelta
+
 # configuration variables
 KEY_GROUP_DB = 'db'
 KEY_DB_HOSTNAME = 'hostname'
@@ -32,6 +34,7 @@ KEY_API_KEY_ID = 'api_key_id'
 KEY_API_KEY = '#api_key'
 KEY_BEARER = '#bearer'
 KEY_SCHEME = 'scheme'
+KEY_TIME_WINDOW = 'time_window_minutes'
 
 KEY_GROUP_DATE = 'date'
 KEY_DATE_APPEND = 'append_date'
@@ -65,6 +68,26 @@ class Component(ComponentBase):
     def __init__(self):
         super().__init__()
 
+    def build_query(self, params):
+        # Pokud je query přímo v configu, použij ho
+        if "query" in params:
+            logging.info("Custom query provided in config, using it directly.")
+            return params["query"]
+
+        # Pokud není, vygeneruj z time_window_minutes
+        minutes = params.get(KEY_TIME_WINDOW, 5)
+        logging.info(f"Generating query for the last {minutes} minutes (now-{minutes}m to now)")
+        return {
+            "query": {
+                "range": {
+                    "@timestamp": {
+                        "gte": f"now-{minutes}m",
+                        "lte": "now"
+                    }
+                }
+            }
+        }
+
     def run(self):
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
@@ -78,7 +101,8 @@ class Component(ComponentBase):
             user_defined_pk = params.get(KEY_PRIMARY_KEYS, [])
             incremental = params.get(KEY_INCREMENTAL, False)
 
-            index_name, query = self.parse_index_parameters(params)
+            index_name = params.get(KEY_INDEX_NAME)
+            query = self.build_query(params)
             logging.info(f"Extracting data from index: {index_name}")
 
             range_query = query.get('query', {}).get('range', {})

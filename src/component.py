@@ -68,10 +68,16 @@ class Component(ComponentBase):
         self.ssh_tunnel = None
 
     def build_query(self, params):
-        if "query" in params:
+        if KEY_QUERY in params:
             logging.info("Custom query provided in config, using it directly.")
-            return params["query"]
+            query = json.loads(params[KEY_QUERY])
 
+            # Přidej default size = 1000, pokud tam není
+            if "size" not in query:
+                query["size"] = params.get("batch_size", 1000)
+            return query
+
+        # Pokud není custom query
         minutes = params.get(KEY_TIME_WINDOW, 5)
         logging.info(f"Generating query for the last {minutes} minutes (now-{minutes}m to now)")
         return {
@@ -82,7 +88,8 @@ class Component(ComponentBase):
                         "lte": "now"
                     }
                 }
-            }
+            },
+            "size": params.get("batch_size", 1000)
         }
 
     def get_client(self, params: dict) -> OpenSearchClient:

@@ -1,10 +1,10 @@
 import json
 import logging
-import uuid
+# import uuid
 import os
 import shutil
-import dateparser
-import pytz
+# import dateparser
+# import pytz
 
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
@@ -59,6 +59,7 @@ KEY_LEGACY_SSH = 'ssh'
 REQUIRED_PARAMETERS = [KEY_GROUP_DB]
 
 RSA_HEADER = "-----BEGIN RSA PRIVATE KEY-----"
+
 
 class Component(ComponentBase):
 
@@ -134,7 +135,8 @@ class Component(ComponentBase):
             raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed. {str(e)}")
 
         return client
-    
+
+
     def run(self):
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
@@ -178,7 +180,8 @@ class Component(ComponentBase):
             os.makedirs(temp_folder, exist_ok=True)
 
             columns = statefile.get(out_table_name, [])
-            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
+            out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
+                                                         incremental=incremental)
 
             doc_count = 0
             try:
@@ -203,33 +206,45 @@ class Component(ComponentBase):
             self.write_state_file(statefile)
             self.cleanup(temp_folder)
 
-    def _create_and_start_ssh_tunnel(self, params):
+    def _create_and_start_ssh_tunnel(self, params) -> None:
         ssh_params = params.get(KEY_SSH)
         ssh_username = ssh_params.get(KEY_SSH_USERNAME)
-        private_key = ssh_params.get(KEY_SSH_KEYS, {}).get(KEY_SSH_PRIVATE_KEY)
+        keys = ssh_params.get(KEY_SSH_KEYS)
+        private_key = keys.get(KEY_SSH_PRIVATE_KEY)
         ssh_tunnel_host = ssh_params.get(KEY_SSH_TUNNEL_HOST)
         ssh_tunnel_port = ssh_params.get(KEY_SSH_TUNNEL_PORT, 22)
         db_params = params.get(KEY_GROUP_DB)
         db_hostname = db_params.get(KEY_DB_HOSTNAME)
-        db_port = int(db_params.get(KEY_DB_PORT))
+        db_port = db_params.get(KEY_DB_PORT)
 
-        if not private_key or not private_key.startswith(RSA_HEADER):
-            raise UserException("Invalid or missing RSA private key.")
+        is_valid, error_message = self.is_valid_rsa(private_key)
+        if not is_valid:
+            raise UserException(f"Invalid RSA key provided: {error_message}")
 
-        logging.info(f"Setting up SSH tunnel to {ssh_tunnel_host}:{ssh_tunnel_port}...")
+        try:
+            private_key = get_private_key(private_key, None)
+        except SomeSSHException as e:
+            raise UserException(e) from e
+
+        try:
+            db_port = int(db_port)
+        except ValueError as e:
+            raise UserException("Remote port must be a valid integer") from e
+
         self.ssh_tunnel = SSHTunnelForwarder(
             ssh_address_or_host=(ssh_tunnel_host, ssh_tunnel_port),
             ssh_username=ssh_username,
-            ssh_pkey=get_private_key(private_key, None),
+            ssh_pkey=private_key,
             remote_bind_address=(db_hostname, db_port),
             local_bind_address=(LOCAL_BIND_ADDRESS, 0)
         )
 
         try:
             self.ssh_tunnel.start()
-            logging.info(f"SSH tunnel established: {self.ssh_tunnel.local_bind_address} -> {db_hostname}:{db_port}")
         except BaseSSHTunnelForwarderError as e:
-            raise UserException("Failed to establish SSH tunnel") from e
+            raise UserException("Failed to establish SSH connection. Recheck all SSH configuration parameters") from e
+
+        logging.info(f"SSH Tunnel is enabled: {self.ssh_tunnel.local_bind_address}")
 
     @staticmethod
     def run_legacy_client():

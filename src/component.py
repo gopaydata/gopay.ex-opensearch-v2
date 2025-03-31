@@ -118,6 +118,11 @@ class Component(ComponentBase):
             if not isinstance(ssh_options, list) and ssh_options.get(KEY_USE_SSH, False):
                 self._create_and_start_ssh_tunnel(params)
 
+            if hasattr(self, "ssh_tunnel") and self.ssh_tunnel.is_active:
+                logging.info(f"SSH Tunnel is active. Local bind address: {self.ssh_tunnel.local_bind_address}")
+            else:
+                logging.info("SSH Tunnel is not active or not configured.")
+
             client = self.get_client(params)
 
             temp_folder = os.path.join(self.data_folder_path, "temp")
@@ -139,8 +144,12 @@ class Component(ComponentBase):
             except Exception as e:
                 raise UserException(f"Error occured while extracting data from OpenSearch: {e}")
             finally:
-                if hasattr(self, 'ssh_tunnel') and self.ssh_tunnel.is_active:
-                    self.ssh_tunnel.stop()
+                if hasattr(self, 'ssh_tunnel'):
+                    if self.ssh_tunnel.is_active:
+                        logging.info("Stopping SSH Tunnel.")
+                        self.ssh_tunnel.stop()
+                    else:
+                        logging.warning("SSH Tunnel was expected but is not active anymore.")
 
             logging.info(f"Total downloaded documents: {doc_count}")
 
@@ -170,10 +179,11 @@ class Component(ComponentBase):
 
         # Pokud je aktivní SSH tunnel, přepíšeme hostname a port
         if hasattr(self, "ssh_tunnel") and self.ssh_tunnel.is_active:
-            logging.info("OK - Tunnel is active.")
-            db_hostname, db_port = self.ssh_tunnel.local_bind_address
+            local_host, local_port = self.ssh_tunnel.local_bind_address
+            logging.info(f"SSH Tunnel is active. Using local_bind_address: {local_host}:{local_port}")
+            db_hostname, db_port = local_host, local_port
         else:
-            logging.info("SSH tunnel is not active or not configured.")
+            logging.info("SSH Tunnel is not active or not configured.")
 
         auth_type = auth_params.get(KEY_AUTH_TYPE, False)
         if auth_type not in ["basic", "api_key", "bearer", "no_auth"]:

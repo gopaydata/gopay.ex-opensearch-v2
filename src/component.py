@@ -99,7 +99,8 @@ class Component(ComponentBase):
             logging.info(f"SSH Tunnel is active. Using local_bind_address: {local_host}:{local_port}")
             db_hostname, db_port = local_host, local_port
         else:
-            logging.info(f"SSH Tunnel is inactive or not configured, using direct connection to {db_hostname}:{db_port}")
+            logging.info(f"SSH Tunnel is inactive or not configured, "
+                         f"using direct connection to {db_hostname}:{db_port}")
 
         auth_type = auth_params.get(KEY_AUTH_TYPE, False)
         if auth_type not in ["basic", "api_key", "bearer", "no_auth"]:
@@ -178,7 +179,8 @@ class Component(ComponentBase):
         os.makedirs(temp_folder, exist_ok=True)
 
         columns = statefile.get(out_table_name, [])
-        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
+        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
+                                                     incremental=incremental)
 
         doc_count = 0
         try:

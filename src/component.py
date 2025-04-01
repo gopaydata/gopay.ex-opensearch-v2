@@ -63,15 +63,28 @@ class Component(ComponentBase):
         self.ssh_tunnel = None
 
     def build_query(self, params):
+        """
+        Builds the query for OpenSearch.
+
+        - If request_body is provided and non-empty, use it as custom query.
+        - If request_body is empty or missing, use a default range query.
+        """
         if KEY_QUERY in params and params[KEY_QUERY]:
-            logging.info("Custom query provided in config, using it directly.")
-            query = params[KEY_QUERY]
+            if isinstance(params[KEY_QUERY], str):
+                logging.info("Custom query provided as string, loading JSON.")
+                query = json.loads(params[KEY_QUERY])
+            else:
+                logging.info("Custom query provided as object, using it directly.")
+                query = params[KEY_QUERY]
             query.setdefault("size", params.get(KEY_SIZE, 1000))
+            logging.info(f"Using custom query with size={query['size']}")
             return query
 
+        # Default query fallback
         minutes = params.get(KEY_TIME_WINDOW, 5)
         size = params.get(KEY_SIZE, 1000)
-        logging.info(f"Generating query for the last {minutes} minutes (now-{minutes}m to now) with size={size}")
+        logging.info(
+            f"No valid custom query provided, generating default query for the last {minutes} minutes with size={size}")
         return {
             "size": size,
             "query": {

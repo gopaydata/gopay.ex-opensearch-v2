@@ -16,7 +16,7 @@
         "request_body": {
             "title": "Query (optional)",
             "description": "Specify OpenSearch query as JSON object.<br> You can also omit 'size' here, component will set it automatically to avoid memory issues (default 1000).",
-            "type": "object",
+            "type": "string",
             "format": "textarea",
             "options": {
                 "input_height": "200px"

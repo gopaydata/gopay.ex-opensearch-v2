@@ -4,7 +4,6 @@ import os
 import shutil
 import gc
 import csv
-csv.field_size_limit(10 * 1024 * 1024)
 
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
@@ -58,6 +57,7 @@ RSA_HEADER = "-----BEGIN RSA PRIVATE KEY-----"
 
 REQUIRED_PARAMETERS = [KEY_GROUP_DB]
 
+csv.field_size_limit(10 * 1024 * 1024)
 
 class Component(ComponentBase):
     def __init__(self):

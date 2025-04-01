@@ -5,8 +5,8 @@ from typing import Iterable
 from opensearchpy import OpenSearch
 from opensearchpy.exceptions import OpenSearchException
 
-DEFAULT_SIZE = 10_000
-SCROLL_TIMEOUT = '15m'
+DEFAULT_SIZE = 1000
+SCROLL_TIMEOUT = '5m'
 
 
 class OpenSearchClientException(Exception):
@@ -28,8 +28,8 @@ class OpenSearchClient(OpenSearch):
 
         super().__init__(**options)
 
-    def extract_data(self, index_name: str, query: str) -> Iterable:
-        response = self.search(index=index_name, size=DEFAULT_SIZE, scroll=SCROLL_TIMEOUT, body=query)
+    def extract_data(self, index_name: str, query: dict, scroll_size: int = DEFAULT_SIZE) -> Iterable:
+        response = self.search(index=index_name, size=scroll_size, scroll=SCROLL_TIMEOUT, body=query)
         for r in self._process_response(response):
             yield r
 
@@ -39,9 +39,8 @@ class OpenSearchClient(OpenSearch):
                 yield r
 
     def _process_response(self, response: dict) -> Iterable:
-        results = [hit["_source"] for hit in response['hits']['hits']]
-        for result in results:
-            yield self.flatten_json(result)
+        for hit in response['hits']['hits']:
+            yield self.flatten_json(hit["_source"])
 
     def ping(self, *args, **kwargs) -> bool:
         try:

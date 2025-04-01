@@ -14,15 +14,29 @@
             "propertyOrder": 100
         },
         "request_body": {
-            "title": "Query",
-            "description": "Query (in JSON), which will be sent together with a request. Allows to specify returned columns and other useful parameters. See <a href='https://opensearch.org/docs/latest/query-dsl/full-text/' target='_blank'>OpenSearch Query DSL documentation</a> for all possible attributes.<br>You can also specify <a href='https://opensearch.org/docs/latest/api-reference/scroll/' target='_blank'><scroll>scroll</scroll></a> parameter to manage scroll length.",
-            "type": "string",
+            "title": "Query (optional)",
+            "description": "Specify OpenSearch query as JSON object.<br> You can also omit 'size' here, component will set it automatically to avoid memory issues (default 1000).",
+            "type": "object",
             "format": "textarea",
             "options": {
-                "input_height": "150px"
+                "input_height": "200px"
             },
             "propertyOrder": 200
         },
+        "size": {
+            "title": "Query size (optional)",
+            "description": "Max number of documents per batch if not specified directly in the query. Default: 1000",
+            "type": "integer",
+            "default": 1000,
+            "propertyOrder": 210
+        },
+        "scroll_size": {
+            "title": "Scroll batch size",
+            "description": "How many documents to retrieve per scroll batch. Default is 1000 to limit memory usage.",
+            "type": "integer",
+            "default": 1000,
+            "propertyOrder": 220
+},
         "time_window_minutes": {
             "title": "Time Window (Minutes)",
             "description": "Specifies the default time window in minutes for generated range query if custom query is not provided.",

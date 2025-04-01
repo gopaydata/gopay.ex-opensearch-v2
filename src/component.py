@@ -1,10 +1,7 @@
 import json
 import logging
-# import uuid
 import os
 import shutil
-# import dateparser
-# import pytz
 import gc
 
 from keboola.component.base import ComponentBase
@@ -16,7 +13,7 @@ from legacy_client.legacy_es_client import LegacyClient
 from client.ssh_utils import SomeSSHException, get_private_key
 from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 
-# configuration variables
+# Configuration keys
 KEY_GROUP_DB = 'db'
 KEY_DB_HOSTNAME = 'hostname'
 KEY_DB_PORT = 'port'
@@ -55,16 +52,12 @@ KEY_SSH_TUNNEL_HOST = "sshHost"
 KEY_SSH_TUNNEL_PORT = "sshPort"
 
 LOCAL_BIND_ADDRESS = "127.0.0.1"
-
-KEY_LEGACY_SSH = 'ssh'
+RSA_HEADER = "-----BEGIN RSA PRIVATE KEY-----"
 
 REQUIRED_PARAMETERS = [KEY_GROUP_DB]
 
-RSA_HEADER = "-----BEGIN RSA PRIVATE KEY-----"
-
 
 class Component(ComponentBase):
-
     def __init__(self):
         super().__init__()
         self.ssh_tunnel = None
@@ -72,7 +65,7 @@ class Component(ComponentBase):
     def build_query(self, params):
         if KEY_QUERY in params and params[KEY_QUERY]:
             logging.info("Custom query provided in config, using it directly.")
-            query = json.loads(params[KEY_QUERY])
+            query = params[KEY_QUERY]
             query.setdefault("size", params.get(KEY_SIZE, 1000))
             return query
 
@@ -101,10 +94,12 @@ class Component(ComponentBase):
         db_port = db_params.get(KEY_DB_PORT)
         scheme = params.get(KEY_SCHEME, "http")
 
-        if hasattr(self, "ssh_tunnel") and self.ssh_tunnel.is_active:
+        if self.ssh_tunnel is not None and self.ssh_tunnel.is_active:
             local_host, local_port = self.ssh_tunnel.local_bind_address
             logging.info(f"SSH Tunnel is active. Using local_bind_address: {local_host}:{local_port}")
             db_hostname, db_port = local_host, local_port
+        else:
+            logging.info(f"SSH Tunnel is inactive or not configured, using direct connection to {db_hostname}:{db_port}")
 
         auth_type = auth_params.get(KEY_AUTH_TYPE, False)
         if auth_type not in ["basic", "api_key", "bearer", "no_auth"]:
@@ -135,8 +130,7 @@ class Component(ComponentBase):
             raise UserException(f"Unsupported auth_type: {auth_type}")
 
         try:
-            p = client.ping(error_trace=True)
-            if not p:
+            if not client.ping(error_trace=True):
                 raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed.")
         except Exception as e:
             raise UserException(f"Connection to OpenSearch instance {db_hostname}:{db_port} failed. {str(e)}")
@@ -146,6 +140,7 @@ class Component(ComponentBase):
     def run(self):
         self.validate_configuration_parameters(REQUIRED_PARAMETERS)
         params = self.configuration.parameters
+        scroll_size = params.get("scroll_size", 1000)
 
         out_table_name = params.get(KEY_STORAGE_TABLE, "").strip() or "ex-opensearch-result"
         logging.info(f"Using output table name: {out_table_name}")
@@ -172,10 +167,10 @@ class Component(ComponentBase):
         if ssh_options and ssh_options.get(KEY_USE_SSH, False):
             self._create_and_start_ssh_tunnel(ssh_options, params)
 
-        if self.ssh_tunnel and self.ssh_tunnel.is_active:
+        if self.ssh_tunnel is not None and self.ssh_tunnel.is_active:
             logging.info(f"SSH Tunnel is active. Local bind address: {self.ssh_tunnel.local_bind_address}")
         else:
-            logging.info("SSH Tunnel is not active or not configured.")
+            logging.info("SSH Tunnel is not active or not configured, using direct connection.")
 
         client = self.get_client(params)
 
@@ -183,23 +178,22 @@ class Component(ComponentBase):
         os.makedirs(temp_folder, exist_ok=True)
 
         columns = statefile.get(out_table_name, [])
-        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk,
-                                                     incremental=incremental)
+        out_table = self.create_out_table_definition(out_table_name, primary_key=user_defined_pk, incremental=incremental)
 
         doc_count = 0
         try:
             with ElasticDictWriter(out_table.full_path, columns) as wr:
-                for result in client.extract_data(index_name, query):
+                for result in client.extract_data(index_name, query, scroll_size):
                     wr.writerow(result)
                     doc_count += 1
-                    if doc_count % 500 == 0:
+                    if doc_count % 1000 == 0:
                         logging.info(f"Downloaded {doc_count} documents so far...")
                         gc.collect()
                 wr.writeheader()
         except Exception as e:
-            raise UserException(f"Error occured while extracting data from OpenSearch: {e}")
+            raise UserException(f"Error occurred while extracting data from OpenSearch: {e}")
         finally:
-            if self.ssh_tunnel and self.ssh_tunnel.is_active:
+            if self.ssh_tunnel is not None and self.ssh_tunnel.is_active:
                 logging.info("Stopping SSH Tunnel.")
                 self.ssh_tunnel.stop()
 
@@ -212,7 +206,6 @@ class Component(ComponentBase):
 
     @staticmethod
     def is_valid_rsa(rsa_key):
-        """Validates the RSA private key."""
         if not rsa_key.startswith(RSA_HEADER):
             return False, "RSA key does not start with the correct header."
         if "\n" not in rsa_key:
@@ -242,8 +235,7 @@ class Component(ComponentBase):
             ssh_username=ssh_username,
             ssh_pkey=private_key,
             remote_bind_address=(db_hostname, db_port),
-            local_bind_address=(LOCAL_BIND_ADDRESS, 0),  # auto-assign local port
-            ssh_config_file=None,
+            local_bind_address=(LOCAL_BIND_ADDRESS, 0),
             allow_agent=False
         )
 

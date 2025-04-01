@@ -46,8 +46,9 @@
         },
         "storage_table": {
             "title": "Output Table Name",
-            "description": "Name of the output table in storage.",
+            "description": "Name of the output table in storage. Default name: ex-opensearch-result",
             "type": "string",
+            "default": "ex-opensearch-result",
             "propertyOrder": 400
         },
         "primary_keys": {

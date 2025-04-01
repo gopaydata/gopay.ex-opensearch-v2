@@ -3,6 +3,8 @@ import logging
 import os
 import shutil
 import gc
+import csv
+csv.field_size_limit(10 * 1024 * 1024)
 
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
